@@ -1,0 +1,178 @@
+
+
+/*-------------------------------------------------------------------------------------------------
+dans une étape data, modifier tous les caractères spéciaux de certaines colonnes définies en array
+-------------------------------------------------------------------------------------------------*/
+
+DATA base_adresses_mrn_&periode._0;
+    SET &nomtable (drop=rue_odr cle);
+
+   ArRAy SEUILS [*] Seuil_MRN_Inondation Couche_Inondation Seuil_MRN_Secheresse
+Seuil_MRN_Submarine Couche_Submersion Seuil_MRN_mvmt_terrain Seuil_MRN_Seisme
+Seuil_MRN_Avalanche Seuil_MRN_Grele Seuil_MRN_Vent Seuil_MRN_Neige Seuil_MRN_Tornade;
+     DO i = 1 TO DIM(SEUILS);
+ 	SEUILS[i] = tranwrd(SEUILS[i],"TrÃšs","Très");
+     END;
+    DROP i;*
+    cont2=put(cont,z9.);
+RUN;
+
+
+/*-------------------------------------------------------------------------------------------------
+			caractéristiques de tables (nombre d'occurences, de variables et dates de création)
+-------------------------------------------------------------------------------------------------*/
+/*trouver le nombre de lignes max dans une table et le mettre en macrovariable*/
+proc sql noprint;
+select count(*) into :derniere_ligne
+from adresse_AUTO_nodupkey;
+quit;
+
+/*Pour trouver le nombre de variables et d'observations sur toutes les tables contenant "202603" */
+%let periode=202603;
+proc sql;
+create table vol_graves as
+select memname,nobs,nvar/*crdate,modate,filesize*/
+from dictionary.tables
+where libname='GRAVES' and memname contains "&periode";
+quit;
+
+/*pour trouver les dates de création et modifications des bases*/
+proc sql;
+   connect to sqlsvr (DATASRC=WORK_SAS_ERTC SCHEMA=sys &param_pass. );
+   create table dates_creation as 
+   select * from connection to sqlsvr (
+		Select  name, create_date, modify_date
+		from sys.all_objects
+		where name like ('%202603%');/*le pass trhough empêche l'utilisation de macrovariable*/
+   );
+   disconnect from sqlsvr;
+quit;
+
+/*Création d'une base de décodification qui relie id_schema avec le nom du schéma Altair*/
+data perso.corresp;
+input schema_id libname $; 
+cards;
+5 geoloc
+6 aggsin
+7 graves
+10 work_ert
+12 pwbi_ert
+13 clim
+94 bases_co
+105 dev_ord
+;
+run;
+
+
+/*-------------------------------------------------------------------------------------------------
+			Nombre de manquants
+-------------------------------------------------------------------------------------------------*/
+proc sql; 
+create table manquants as
+select  nmiss(latitude) as n_missing_latitude, 
+		nmiss(longitude) as n_missing_longitude
+from auto_geocode; 
+quit;
+
+/*-------------------------------------------------------------------------------------------------
+		Suppression de variables contenant le même mot (ici _expo_)
+-------------------------------------------------------------------------------------------------*/
+
+proc contents data=base_MAV out=contents(keep=name) noprint ; run;
+
+proc sql noprint ;
+select name into :droplist separated by ' '
+from contents
+where name like '%_expo_%'
+;
+quit;
+
+%put &droplist;
+
+data base_MAV2 ;
+  set base_MAV (drop=&droplist);
+run;
+
+
+/*-------------------------------------------------------------------------------------------------
+		Format UT UP
+-------------------------------------------------------------------------------------------------*/
+PROC SQL;
+CREATE TABLE &produit._&annee. AS
+SELECT a.*,b.libelle_up as LIB_UP, b.REGROUP_UT AS RUP
+FROM &produit._&annee. as a 
+LEFT JOIN FORMAT.utup_vs8 as b 
+ON a.UP=b.UP
+;QUIT;
+
+
+/*-------------------------------------------------------------------------------------------------
+		Imports exports
+-------------------------------------------------------------------------------------------------*/
+
+proc import
+datafile="/altairprod/slc_iard/etude/ERTC/cmillon/Motifs_avenants.xlsx"
+out=recodage_motif_avenant
+dbms=xlsx
+replace;
+run;
+
+proc export data=sortie_peril
+	outfile="/altairprod/slc_iard/etude/ERTC/ERT/04_Projets/Geolocalisation/Output/Inondation_202512.xlsx"
+	dbms=xlsx;
+run;
+
+proc export data=extract
+outfile='/altairprod/slc_iard/etude/ERTC/ERT/04_Projets/Geolocalisation/Output/extract.csv'
+            DBMS=CSV REPLACE;
+            encoding="UTF-8";
+            PUTNAMES=YES;
+run;
+
+
+libname camille "/altairprod/slc_iard/etude/ERTC/cmillon/";
+
+data camille.recodage_motif_avenant;
+set recodage_motif_avenant;
+run;
+
+/*-------------------------------------------------------------------------------------------------
+	Mettre en colonne des éléments d'une seule colonne séparés par un point-virgule
+-------------------------------------------------------------------------------------------------*/
+
+/*motifs des avenants*/
+proc sql;
+create table motif_unique as
+select distinct mot_avt,count(*) as nb
+from motifs_avts
+group by 1;
+quit;
+
+/* Extraire les éléments séparés par des point virgules */
+data elements;
+    set motif_unique(keep=mot_avt);
+    length element $32767;
+
+    do i = 1 to countw(mot_avt, ';');
+        element = strip(scan(mot_avt, i, ';'));
+        if not missing(element) then output;
+    end;
+
+    keep element;
+run;
+
+/* Garder chaque élément une seule fois */
+proc sort data=elements
+          out=liste_motifs
+          nodupkey;
+    by element;
+run;
+
+
+
+/*-------------------------------------------------------------------------------------------------
+		Formules
+-------------------------------------------------------------------------------------------------*/
+/*table  pwbi_erc.ref_produit_formule*/
+
+/*proditn -> produit : format.codeproduit1*/
