@@ -1,0 +1,65 @@
+----------------
+Tips Python-----
+----------------
+
+
+*********************************************************
+			os
+*********************************************************
+userid=os.getlogin( )  #détection du username pour utiliser le sharepoint
+
+
+from pathlib import Path # Définition du répertoire et du fichier 
+repertoire = Path("rf"C:\Users\{userid}\Groupe BPCE\Pilotage Technique - Documents\Général
+") 
+OU
+Repertoire=Path("Users","Groupe BPCE","Pilotage Technique"…)
+nom_fichier = "ma_base.parquet" 
+chemin_complet = repertoire / nom_fichier
+
+*********************************************************
+			Pandas
+*********************************************************
+df_copy=df.copy()
+
+
+*********************************************************
+			Matplotlib
+*********************************************************
+fig, (ax1, ax2) = plt.subplots(nrows=1, ncols=2, figsize=(12, 12))
+data_wgs84.plot(ax=ax1, facecolor="gray")
+data.plot(ax=ax2, facecolor="blue", edgecolor="white", lw=0.5)
+ax1.set_title("WGS84")
+ax2.set_title("ETRS Lambert Azimuthal Equal Area projection")
+# Remove empty white space around the plot
+plt.tight_layout()
+_________________
+
+
+*********************************************************
+			Geopandas
+*********************************************************
+.sjoin()
+.sjoin_nearest()
+
+
+*********************************************************
+			Shapely
+*********************************************************
+_________________
+from shapely import Point, Polygon
+
+# Create Point objects
+point1 = Point(24.952242, 60.1696017)
+point2 = Point(24.976567, 60.1612500)
+
+# Create a Polygon
+coordinates = [
+    (24.950899, 60.169158),
+    (24.953492, 60.169158),
+    (24.953510, 60.170104),
+    (24.950958, 60.169990),
+]
+polygon = Polygon(coordinates)
+_________________
+
