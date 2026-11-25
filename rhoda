@@ -53,3 +53,18 @@ def mise_en_forme_rhoda(df_init, insee, peril="Secheresse"):
     resultat["SUMPOND"] = resultat.groupby(["CODE_DEP", "type_logement"])["NBPOND"].transform("sum")
 
     return resultat
+
+
+# 2. Grille complète : chaque (type_logement, département) × les 5 seuils
+infos_dep = df[["type_logement", "CODE_DEP", "NOM_DEP",
+                "TYPE_ENJEUX", "NB_ENJEUX", "ALEA"]].drop_duplicates()
+seuils = pd.DataFrame({"SEUIL_VIGILANCE": list(LIBELLES)})
+grille = infos_dep.merge(seuils, how="cross")
+
+# 3. On rattache les comptages ; les seuils absents prennent 0
+resultat = grille.merge(
+    comptes,
+    on=["type_logement", "CODE_DEP", "SEUIL_VIGILANCE"],
+    how="left",
+    validate="1:1",
+)
