@@ -1,70 +1,73 @@
 import unicodedata
-import pandas as pd
 
-LIBELLES = {"TRES_BAS": 1, "BAS": 2, "MOYEN": 3, "HAUT": 4, "TRES_HAUT": 5}
+LIBELLES = {
+    "TRES_BAS":1,
+    "BAS":2,
+    "MOYEN":3,
+    "HAUT":4,
+    "TRES_HAUT":5,
+}
 
-
-def mise_en_forme_rhoda(df_init, insee, peril="Secheresse"):
+def mise_en_forme_rhoda(df_init,peril='Secheresse'):
     """Regroupe les résultats par département, type de logement et seuil de vigilance.
 
     insee : DataFrame avec au moins les colonnes DEP (str) et NCC.
     """
-    df = df_init.copy()
 
-    df["CODE_DEP"] = df["dep"].astype(str).str.replace(r"\.0$", "", regex=True).str.zfill(2)
-    df["ALEA"] = peril.upper()
-    df["TYPE_ENJEUX"] = "BAN"
-
-    seuil = (
-        df[f"Seuil_MRN_{peril}"]
-        .str.replace("Fort", "Haut", regex=False)   # sécheresse : FORT au lieu de HAUT
-        .str.replace(" ", "_", regex=False)
-        .str.upper()
-        .str.normalize("NFKD").str.encode("ascii", "ignore").str.decode("ascii")
+    df=df_init.copy()
+    
+    df['CODE_DEP']=df.dep.astype(str).str.zfill(2)
+    df['ALEA']=peril.upper()
+    df['TYPE_ENJEUX']='BAN'
+    df['SEUIL_VIGILANCE']=(df[f"Seuil_MRN_{peril}"]
+                           .str.replace("Fort","Haut",regex=False) #pour la sécheresse, c'est FORT, et pas haut
+                           .str.replace(" ","_", regex=False)
+                           .str.upper()
+                           .str.normalize("NFKD").str.encode("ascii", "ignore").str.decode("ascii") #supprime les accents sur les "Très"
     )
-    inconnus = set(seuil.dropna()) - set(LIBELLES)
-    if inconnus:
-        raise ValueError(f"Seuils non reconnus : {inconnus}")
-    df["SEUIL_VIGILANCE"] = pd.Categorical(seuil, categories=list(LIBELLES), ordered=True)
-
-    # Jointure INSEE contrôlée
+    
+    #on merge avec la table INSEE pour récupérer les informations
+    ref_insee=rf"C:\Users\{userid}\Groupe BPCE\Pilotage Technique - Documents\Général\04-Projets\Geolocalisation\RES_MRN\REF_INSEE.xlsx"
+    insee=pd.read_excel(ref_insee)
     insee = insee.assign(DEP=insee["DEP"].astype(str).str.zfill(2))
-    df = df.merge(insee[["DEP", "NCC"]], left_on="CODE_DEP", right_on="DEP",
-                  how="left", validate="m:1").rename(columns={"NCC": "NOM_DEP"})
+    df=pd.merge(df,insee[['DEP','NCC','REG']],left_on='CODE_DEP',right_on='DEP',how="left", validate="m:1").rename(columns={'NCC': 'NOM_DEP','type_logement':'TYPE_HAB'})
     manquants = df.loc[df["NOM_DEP"].isna(), "CODE_DEP"].unique()
     if len(manquants):
         print(f"Attention, départements absents du référentiel INSEE : {manquants}")
 
-    # Nombre total d'enjeux par département / type de logement
-    df["NB_ENJEUX"] = df.groupby(["type_logement", "CODE_DEP"])["CODE_DEP"].transform("size")
-
-    cles = ["type_logement", "CODE_DEP", "NOM_DEP", "TYPE_ENJEUX", "NB_ENJEUX", "ALEA"]
-    resultat = (
-        df.groupby(cles + ["SEUIL_VIGILANCE"], observed=False, dropna=False)
+    #on calcule le nombre d'enjeux par département dans un premier temps
+    df["NB_ENJEUX"] = df.groupby(["TYPE_HAB", "CODE_DEP"])["CODE_DEP"].transform("size")
+    
+    #Calcul du nombre d'enjeux sur les seuils présents
+    comptes = (
+        df.groupby(["TYPE_HAB","CODE_DEP","SEUIL_VIGILANCE"])
           .size()
           .reset_index(name="NOMBRE")
     )
-    # observed=False crée aussi des combinaisons absurdes entre clés non catégorielles : on filtre
-    resultat = resultat[resultat["NB_ENJEUX"].notna()]
 
-    resultat["TAUX"] = resultat["NOMBRE"] / resultat["NB_ENJEUX"] * 100
-    resultat["SEUIL_VIGILANCE_NUM"] = resultat["SEUIL_VIGILANCE"].map(LIBELLES).astype(float)
-    resultat["NBPOND"] = resultat["NOMBRE"] * resultat["SEUIL_VIGILANCE_NUM"]
-    resultat["SUMPOND"] = resultat.groupby(["CODE_DEP", "type_logement"])["NBPOND"].transform("sum")
+    # Grille complète : chaque (type_logement, département) × les 5 seuils (même si seuil absent)
+    infos_dep = df[["TYPE_HAB", "CODE_DEP", "NOM_DEP",
+                    "TYPE_ENJEUX", "NB_ENJEUX", "ALEA"]].drop_duplicates()
+    seuils = pd.DataFrame({"SEUIL_VIGILANCE": list(LIBELLES)})
+    grille = infos_dep.merge(seuils, how="cross")
+
+    # 3. On rattache les comptages ; les seuils absents prennent 0
+    resultat = grille.merge(
+        comptes,
+        on=["TYPE_HAB", "CODE_DEP", "SEUIL_VIGILANCE"],
+        how="left",
+        validate="1:1",
+    )
+
+
+    #sur le total on rajoute tous les champs attendus
+    resultat['TAUX']=resultat.NOMBRE/resultat.NB_ENJEUX*100
+    resultat['SEUIL_VIGILANCE_NUM']=resultat.SEUIL_VIGILANCE.astype("string").map(LIBELLES)
+    resultat['NBPOND']=resultat.NOMBRE*resultat.SEUIL_VIGILANCE_NUM
+    resultat["SUMPOND"] = resultat.groupby(["CODE_DEP", "TYPE_HAB"])["NBPOND"].transform("sum")
+    resultat["SEUILPOND"] = resultat.TAUX*resultat.SEUIL_VIGILANCE_NUM/100
+    resultat["SEUILPOND2"] = resultat.NOMBRE*resultat.SEUIL_VIGILANCE_NUM/resultat.NB_ENJEUX
+    resultat["SEUILPONDDEPT"]=resultat.groupby(["CODE_DEP", "TYPE_HAB"])["SEUILPOND"].transform("sum")
+    resultat["SEUILPONDPAYS"]=resultat.SUMPOND/resultat.groupby(["NOMBRE"])["SEUILPOND"].transform("sum")
 
     return resultat
-
-
-# 2. Grille complète : chaque (type_logement, département) × les 5 seuils
-infos_dep = df[["type_logement", "CODE_DEP", "NOM_DEP",
-                "TYPE_ENJEUX", "NB_ENJEUX", "ALEA"]].drop_duplicates()
-seuils = pd.DataFrame({"SEUIL_VIGILANCE": list(LIBELLES)})
-grille = infos_dep.merge(seuils, how="cross")
-
-# 3. On rattache les comptages ; les seuils absents prennent 0
-resultat = grille.merge(
-    comptes,
-    on=["type_logement", "CODE_DEP", "SEUIL_VIGILANCE"],
-    how="left",
-    validate="1:1",
-)
