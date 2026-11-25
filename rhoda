@@ -1,73 +1,107 @@
 import unicodedata
+import pandas as pd
 
 LIBELLES = {
-    "TRES_BAS":1,
-    "BAS":2,
-    "MOYEN":3,
-    "HAUT":4,
-    "TRES_HAUT":5,
+    "TRES_BAS": 1,
+    "BAS": 2,
+    "MOYEN": 3,
+    "HAUT": 4,
+    "TRES_HAUT": 5,
 }
 
-def mise_en_forme_rhoda(df_init,peril='Secheresse'):
-    """Regroupe les résultats par département, type de logement et seuil de vigilance.
 
-    insee : DataFrame avec au moins les colonnes DEP (str) et NCC.
-    """
+def preparer_rhoda(df_init, peril="Secheresse"):
+    """Nettoie les données et ajoute les infos INSEE (nom du département, région)."""
+    df = df_init.copy()
 
-    df=df_init.copy()
-    
-    df['CODE_DEP']=df.dep.astype(str).str.zfill(2)
-    df['ALEA']=peril.upper()
-    df['TYPE_ENJEUX']='BAN'
-    df['SEUIL_VIGILANCE']=(df[f"Seuil_MRN_{peril}"]
-                           .str.replace("Fort","Haut",regex=False) #pour la sécheresse, c'est FORT, et pas haut
-                           .str.replace(" ","_", regex=False)
-                           .str.upper()
-                           .str.normalize("NFKD").str.encode("ascii", "ignore").str.decode("ascii") #supprime les accents sur les "Très"
+    df["CODE_DEP"] = df.dep.astype(str).str.zfill(2)
+    df["ALEA"] = peril.upper()
+    df["TYPE_ENJEUX"] = "BAN"
+    df["SEUIL_VIGILANCE"] = (
+        df[f"Seuil_MRN_{peril}"]
+        .str.replace("Fort", "Haut", regex=False)  # pour la sécheresse, c'est FORT et pas HAUT
+        .str.replace(" ", "_", regex=False)
+        .str.upper()
+        .str.normalize("NFKD").str.encode("ascii", "ignore").str.decode("ascii")  # supprime les accents
     )
-    
-    #on merge avec la table INSEE pour récupérer les informations
-    ref_insee=rf"C:\Users\{userid}\Groupe BPCE\Pilotage Technique - Documents\Général\04-Projets\Geolocalisation\RES_MRN\REF_INSEE.xlsx"
-    insee=pd.read_excel(ref_insee)
-    insee = insee.assign(DEP=insee["DEP"].astype(str).str.zfill(2))
-    df=pd.merge(df,insee[['DEP','NCC','REG']],left_on='CODE_DEP',right_on='DEP',how="left", validate="m:1").rename(columns={'NCC': 'NOM_DEP','type_logement':'TYPE_HAB'})
+
+    # Jointure INSEE
+    ref_insee = rf"C:\Users\{userid}\Groupe BPCE\Pilotage Technique - Documents\Général\04-Projets\Geolocalisation\RES_MRN\REF_INSEE.xlsx"
+    insee = pd.read_excel(ref_insee, dtype={"DEP": str, "REG": str})
+    insee = insee.assign(DEP=insee["DEP"].str.zfill(2), REG=insee["REG"].str.zfill(2))
+
+    df = (
+        df.merge(insee[["DEP", "NCC", "REG"]], left_on="CODE_DEP", right_on="DEP",
+                 how="left", validate="m:1")
+          .rename(columns={"NCC": "NOM_DEP", "REG": "CODE_REG", "type_logement": "TYPE_HAB"})
+    )
+
     manquants = df.loc[df["NOM_DEP"].isna(), "CODE_DEP"].unique()
     if len(manquants):
         print(f"Attention, départements absents du référentiel INSEE : {manquants}")
 
-    #on calcule le nombre d'enjeux par département dans un premier temps
-    df["NB_ENJEUX"] = df.groupby(["TYPE_HAB", "CODE_DEP"])["CODE_DEP"].transform("size")
-    
-    #Calcul du nombre d'enjeux sur les seuils présents
+    inattendus = set(df["TYPE_HAB"].dropna()) - {"Maison", "Appartement"}
+    if inattendus:
+        print(f"Attention, valeurs de TYPE_HAB inattendues : {inattendus}")
+
+    return df
+
+
+def agreger_rhoda(df, niveau):
+    """Calcule les indicateurs par TYPE_HAB et par niveau géographique ('DEP' ou 'REG')."""
+    code = f"CODE_{niveau}"
+    cles = ["TYPE_HAB", code]
+    colonnes_infos = cles + (["NOM_DEP"] if niveau == "DEP" else []) + ["TYPE_ENJEUX", "ALEA"]
+
+    df = df.dropna(subset=[code]).copy()
+
+    # Nombre total d'enjeux par zone
+    df["NB_ENJEUX"] = df.groupby(cles)[code].transform("size")
+
+    # Comptages réels (seuils présents uniquement)
     comptes = (
-        df.groupby(["TYPE_HAB","CODE_DEP","SEUIL_VIGILANCE"])
+        df.groupby(cles + ["SEUIL_VIGILANCE"])
           .size()
           .reset_index(name="NOMBRE")
     )
 
-    # Grille complète : chaque (type_logement, département) × les 5 seuils (même si seuil absent)
-    infos_dep = df[["TYPE_HAB", "CODE_DEP", "NOM_DEP",
-                    "TYPE_ENJEUX", "NB_ENJEUX", "ALEA"]].drop_duplicates()
+    # Grille complète : chaque zone × les 5 seuils
+    infos = df[colonnes_infos + ["NB_ENJEUX"]].drop_duplicates()
     seuils = pd.DataFrame({"SEUIL_VIGILANCE": list(LIBELLES)})
-    grille = infos_dep.merge(seuils, how="cross")
+    grille = infos.merge(seuils, how="cross")
 
-    # 3. On rattache les comptages ; les seuils absents prennent 0
-    resultat = grille.merge(
-        comptes,
-        on=["TYPE_HAB", "CODE_DEP", "SEUIL_VIGILANCE"],
-        how="left",
-        validate="1:1",
-    )
+    resultat = grille.merge(comptes, on=cles + ["SEUIL_VIGILANCE"], how="left", validate="1:1")
+    resultat["NOMBRE"] = resultat["NOMBRE"].fillna(0).astype(int)
+
+    # Indicateurs
+    resultat["TAUX"] = resultat.NOMBRE / resultat.NB_ENJEUX * 100
+    resultat["SEUIL_VIGILANCE_NUM"] = resultat.SEUIL_VIGILANCE.map(LIBELLES)
+    resultat["NBPOND"] = resultat.NOMBRE * resultat.SEUIL_VIGILANCE_NUM
+    resultat["SUMPOND"] = resultat.groupby(cles)["NBPOND"].transform("sum")
+    resultat["SEUILPOND"] = resultat.TAUX * resultat.SEUIL_VIGILANCE_NUM / 100
+    resultat["SEUILPOND2"] = resultat.NOMBRE * resultat.SEUIL_VIGILANCE_NUM / resultat.NB_ENJEUX
+
+    nom_pond_zone = "SEUILPONDDEPT" if niveau == "DEP" else "SEUILPONDREG"
+    resultat[nom_pond_zone] = resultat.groupby(cles)["SEUILPOND"].transform("sum")
+
+    # À VÉRIFIER : regrouper par NOMBRE semble douteux
+    resultat["SEUILPONDPAYS"] = resultat.SUMPOND / resultat.groupby(["NOMBRE"])["SEUILPOND"].transform("sum")
+
+    return resultat.sort_values(cles + ["SEUIL_VIGILANCE_NUM"]).reset_index(drop=True)
 
 
-    #sur le total on rajoute tous les champs attendus
-    resultat['TAUX']=resultat.NOMBRE/resultat.NB_ENJEUX*100
-    resultat['SEUIL_VIGILANCE_NUM']=resultat.SEUIL_VIGILANCE.astype("string").map(LIBELLES)
-    resultat['NBPOND']=resultat.NOMBRE*resultat.SEUIL_VIGILANCE_NUM
-    resultat["SUMPOND"] = resultat.groupby(["CODE_DEP", "TYPE_HAB"])["NBPOND"].transform("sum")
-    resultat["SEUILPOND"] = resultat.TAUX*resultat.SEUIL_VIGILANCE_NUM/100
-    resultat["SEUILPOND2"] = resultat.NOMBRE*resultat.SEUIL_VIGILANCE_NUM/resultat.NB_ENJEUX
-    resultat["SEUILPONDDEPT"]=resultat.groupby(["CODE_DEP", "TYPE_HAB"])["SEUILPOND"].transform("sum")
-    resultat["SEUILPONDPAYS"]=resultat.SUMPOND/resultat.groupby(["NOMBRE"])["SEUILPOND"].transform("sum")
+def tables_rhoda(df_init, peril="Secheresse"):
+    """Renvoie les 6 tables dans un dictionnaire, indexé par (niveau, type d'habitat)."""
+    df = preparer_rhoda(df_init, peril)
 
-    return resultat
+    sous_ensembles = {
+        "Appartement": df[df.TYPE_HAB == "Appartement"],
+        "Maison": df[df.TYPE_HAB == "Maison"],
+        "Maison+Appartement": df.assign(TYPE_HAB="Maison+Appartement"),
+    }
+
+    tables = {}
+    for niveau in ("DEP", "REG"):
+        for type_hab, sous_df in sous_ensembles.items():
+            tables[(niveau, type_hab)] = agreger_rhoda(sous_df, niveau)
+    return tables
