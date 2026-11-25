@@ -1,0 +1,78 @@
+import unicodedata
+#regroupe les résutats par département et type de logement
+def mise_en_forme_rhoda(df_init,peril='Secheresse'):
+    
+    df=df_init.copy()
+    LIBELLES = {
+        "TRES_BAS":1,
+        "BAS":2,
+        "MOYEN":3,
+        "HAUT":4,
+        "TRES_HAUT":5,
+    }
+
+    categories = list(LIBELLES)
+
+    #on importe la table insee pour récupérer les infos utiles
+    ref_insee=rf"C:\Users\{userid}\Groupe BPCE\Pilotage Technique - Documents\Général\04-Projets\Geolocalisation\RES_MRN\REF_INSEE.xlsx"
+    insee=pd.read_excel(ref_insee)
+
+    df['CODE_DEP']=df.dep.astype(str).str.zfill(2)
+    df['ALEA']=peril.upper()
+    df['TYPE_ENJEUX']='BAN'
+    df['SEUIL_VIGILANCE']=(df[f"Seuil_MRN_{peril}"]
+                           .str.replace("Fort","Haut", regex=True) #pour la sécheresse, c'est FORT, et pas haut
+                           .str.replace(" ","_", regex=True)
+                           .str.upper()
+                           .map(lambda s: "".join(
+            c for c in unicodedata.normalize("NFKD", s)
+            if not unicodedata.combining(c)
+        ) if pd.notna(s) else s
+    )
+    )
+    
+    #on merge avec la table INSEE pour récupérer les informations
+    df=pd.merge(df,insee[['DEP','NCC','REG']],left_on='CODE_DEP',right_on='DEP').rename(columns={'NCC': 'NOM_DEP'})
+
+    #on calcule le nombre d'enjeux par département dans un premier temps
+    somme_dep=(df
+        .groupby(['type_logement','CODE_DEP'])
+        .sum()
+        .reset_index(name='NB_ENJEUX')
+    )
+
+    #on rajoute cette colonne à df
+    df=pd.merge(df,somme_dep,on=['type_logement','CODE_DEP'])
+    
+    #puis on calcule le nombre d'enjeux par seuil par département
+    resultat = (
+        df.groupby(
+            [
+                "type_logement", "CODE_DEP", "NOM_DEP",
+                "TYPE_ENJEUX", "NB_ENJEUX", "ALEA",
+                "SEUIL_VIGILANCE"
+            ],
+            observed=False
+        )
+        .size()
+        .reset_index(name="NOMBRE")
+    )
+
+    #sur le total on rajoute tous les champs attendus
+    resultat['TAUX']=resultat.NOMBRE/resultat.NB_ENJEUX*100
+    resultat['SEUIL_VIGILANCE_NUM']=resultat.SEUIL_VIGILANCE.astype("string").map(LIBELLES)
+    resultat['NBPOND']=resultat.NOMBRE*resultat.SEUIL_VIGILANCE_NUM
+    
+    sumpond = (
+        resultat.groupby(["CODE_DEP", "type_logement"], as_index=False)["NBPOND"]
+        .sum()
+        .rename(columns={"NBPOND": "SUMPOND"})
+    )
+
+    resultat = resultat.merge(
+    sumpond,
+    on=["CODE_DEP", "type_logement"],
+    how="left"
+)
+    
+    return resultat
