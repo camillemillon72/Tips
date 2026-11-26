@@ -1,3 +1,27 @@
+from pathlib import Path
+
+def dossier_du_code():
+    """Dossier où se trouve le script (ou le notebook) en cours d'exécution."""
+    try:
+        return Path(__file__).resolve().parent   # script .py
+    except NameError:
+        return Path.cwd()                        # Jupyter, console interactive
+
+DOSSIER_CODE = dossier_du_code()
+
+
+# Exemple : le code est dans ...\Geolocalisation\Scripts
+# et le fichier dans ...\Geolocalisation\RES_MRN
+ref_insee = DOSSIER_CODE.parent / "RES_MRN" / "REF_INSEE.xlsx"
+
+if not ref_insee.exists():
+    raise FileNotFoundError(f"Fichier introuvable : {ref_insee}")
+
+insee = pd.read_excel(ref_insee, dtype={"DEP": str, "REG": str})
+
+
+#--------------------------------------------
+
 import unicodedata
 import pandas as pd
 
