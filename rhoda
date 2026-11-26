@@ -1,3 +1,63 @@
+
+repertoire_python=Path.cwd()
+
+print(repertoire_python.parents[1])
+c:\Users\BKW15QH\Groupe BPCE\Pilotage Technique - Documents\Général\04-Projets\Geolocalisation
+
+df26=get_MRN_risk(
+    path_csv=repertoire_python.parents[1]/"Adresses_Rhoda"/"202611",
+    list_file=[
+        "202611_rhoda.csv"
+              ],
+    file_output="rien",
+    sep=",",
+    type_source="csv",
+    encoding = 'utf-8',
+    liste_functions = [#get_MRN_inondation_risk,
+                       get_MRN_secheresse_risk
+                       #get_MRN_submarine_risk,
+                       #get_MRN_mvmt_terrain_risk,
+                       #get_MRN_seisme_risk,
+                       #get_MRN_avalanche_risk,
+                       #get_MRN_grele_risk,
+                       #get_MRN_neige_vent_risk,
+                       #get_MRN_tornade_risk
+                           ]
+    )
+
+---------------------------------------------------------------------------
+TypeError                                 Traceback (most recent call last)
+Cell In[11], line 1
+----> 1 df26=get_MRN_risk(
+      2     path_csv=repertoire_python.parents[1]/"Adresses_Rhoda"/"202611",
+      3     list_file=[
+      4         "202611_rhoda.csv"
+      5               ],
+      6     file_output="rien",
+      7     sep=",",
+      8     type_source="csv",
+      9     encoding = 'utf-8',
+     10     liste_functions = [#get_MRN_inondation_risk,
+     11                        get_MRN_secheresse_risk
+     12                        #get_MRN_submarine_risk,
+     13                        #get_MRN_mvmt_terrain_risk,
+     14                        #get_MRN_seisme_risk,
+     15                        #get_MRN_avalanche_risk,
+     16                        #get_MRN_grele_risk,
+     17                        #get_MRN_neige_vent_risk,
+     18                        #get_MRN_tornade_risk
+     19                            ]
+     20     )
+
+File c:\Users\BKW15QH\Groupe BPCE\Pilotage Technique - Documents\Général\04-Projets\Geolocalisation\Process MRH\Code python\fonctions.py:1529, in get_MRN_risk(path_csv, list_file, file_output, sep, type_source, encoding, liste_functions)
+...
+-> 1529 os.chdir(path_csv + "/input")
+   1530 # Lecture du fichier .csv comportant les adresses
+   1531 gdf_adress = pd.DataFrame()
+
+TypeError: unsupported operand type(s) for +: 'WindowsPath' and 'str'
+#----------------------------------------------------------------------
+
 from pathlib import Path
 
 def dossier_du_code():
